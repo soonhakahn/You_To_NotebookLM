@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>YouTube → NotebookLM</title>
+  <meta name="description" content="YouTube 재생목록을 NotebookLM 소스로 한 번에 붙여넣기">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="YT→NotebookLM">
+  <meta name="theme-color" content="#1a73e8">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <style>
+    :root {
+      --bg: #f6f7f9; --card: #fff; --text: #1f2328; --muted: #656d76;
+      --line: #d8dee4; --accent: #1a73e8; --accent-text: #fff;
+      --ok: #1a7f37; --warn: #9a6700; --err: #cf222e;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117; --card: #161b22; --text: #e6edf3; --muted: #8d96a0;
+        --line: #30363d; --accent: #4c8df6; --accent-text: #fff;
+        --ok: #3fb950; --warn: #d29922; --err: #f85149;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+      padding: env(safe-area-inset-top) 16px calc(24px + env(safe-area-inset-bottom));
+    }
+    main { max-width: 640px; margin: 0 auto; }
+    h1 { font-size: 22px; margin: 20px 0 4px; }
+    .sub { color: var(--muted); margin: 0 0 16px; font-size: 14px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+    label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 14px; }
+    textarea, input, select {
+      width: 100%; font: inherit; color: inherit; background: var(--bg);
+      border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+    }
+    textarea { min-height: 90px; resize: vertical; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .row > * { flex: 1 1 auto; }
+    button, .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      font: inherit; font-weight: 600; border-radius: 8px; padding: 10px 14px; cursor: pointer;
+      border: 1px solid var(--line); background: var(--card); color: var(--text); text-decoration: none;
+    }
+    button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+    button:disabled { opacity: .5; cursor: default; }
+    .grow { flex: 1 1 100%; }
+    details summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+    .hint { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+    .status { font-size: 14px; margin: 8px 0 0; min-height: 1.5em; }
+    .status.err { color: var(--err); } .status.ok { color: var(--ok); }
+    .batch { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 12px; }
+    .batch:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
+    .batch-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .batch-head strong { font-size: 15px; }
+    .batch.done .batch-head strong::after { content: " ✓"; color: var(--ok); }
+    ol { margin: 8px 0 0; padding-left: 22px; font-size: 13px; }
+    li { margin: 2px 0; overflow-wrap: anywhere; }
+    li.skip { color: var(--muted); text-decoration: line-through; }
+    li a { color: inherit; }
+    .tag { font-size: 11px; border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; margin-left: 4px; color: var(--warn); }
+    .steps { margin: 0; padding-left: 20px; font-size: 14px; }
+    .toast {
+      position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+      background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 999px; font-size: 14px;
+      opacity: 0; transition: opacity .2s; pointer-events: none;
+    }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>YouTube → NotebookLM</h1>
+  <p class="sub">재생목록 링크를 붙여넣으면 모든 영상 URL을 NotebookLM에 붙여넣을 수 있게 묶어 드립니다.</p>
+
+  <section class="card">
+    <label for="input">YouTube 재생목록 또는 동영상 URL</label>
+    <textarea id="input" placeholder="https://www.youtube.com/playlist?list=...&#10;(여러 개를 줄바꿈으로 넣어도 됩니다)"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button id="paste" type="button">📋 붙여넣기</button>
+      <button id="go" class="primary" type="button">영상 목록 가져오기</button>
+    </div>
+    <p id="status" class="status" role="status"></p>
+  </section>
+
+  <section class="card">
+    <details id="settings">
+      <summary>설정 (YouTube API 키 · 묶음 크기)</summary>
+      <div style="margin-top:10px">
+        <label for="apikey">YouTube Data API v3 키</label>
+        <input id="apikey" type="password" autocomplete="off" placeholder="AIza...">
+        <p class="hint">재생목록 조회에 필요합니다. 키는 이 기기 브라우저에만 저장됩니다.
+          발급: Google Cloud Console → API 및 서비스 → “YouTube Data API v3” 사용 설정 → 사용자 인증 정보 → API 키.</p>
+        <label for="size" style="margin-top:12px">한 번에 붙여넣을 URL 개수</label>
+        <select id="size">
+          <option value="1">1개씩 (가장 안전)</option>
+          <option value="10">10개씩</option>
+          <option value="20" selected>20개씩</option>
+          <option value="50">50개씩 (무료 노트북 최대)</option>
+        </select>
+        <p class="hint">한 노트북의 소스 수 한도는 요금제에 따라 다릅니다(무료 50개). 한도를 넘는 재생목록은 여러 노트북으로 나누세요.</p>
+      </div>
+    </details>
+  </section>
+
+  <section class="card" id="result" hidden>
+    <div class="row" style="margin-bottom:12px">
+      <strong id="summary" class="grow"></strong>
+      <a class="btn" href="https://notebooklm.google.com/" target="_blank" rel="noopener">NotebookLM 열기 ↗</a>
+    </div>
+    <div id="batches"></div>
+  </section>
+
+  <section class="card">
+    <strong>NotebookLM에 넣는 방법</strong>
+    <ol class="steps">
+      <li>아래 묶음의 <b>복사</b> 버튼을 누릅니다.</li>
+      <li>NotebookLM에서 노트북을 열고 <b>+ 소스 추가</b> → <b>웹사이트</b>(또는 <b>YouTube</b>)를 선택합니다.</li>
+      <li>복사한 URL을 붙여넣고 <b>삽입</b>. 다음 묶음도 반복합니다.</li>
+    </ol>
+    <p class="hint">여러 URL 동시 붙여넣기가 안 되는 화면이라면 묶음 크기를 “1개씩”으로 바꾸세요.
+      자막(캡션)이 없는 영상은 NotebookLM이 가져오지 못할 수 있습니다.</p>
+  </section>
+</main>
+<div id="toast" class="toast"></div>
+
+<script type="module">
+  import {
+    parseInput, toWatchUrl, chunk, fetchPlaylistItems, fetchPlaylistTitle, isImportable,
+  } from './lib.js';
+
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k) { try { return localStorage.getItem(k) ?? ''; } catch { return ''; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+
+  $('apikey').value = store.get('ytApiKey');
+  $('size').value = store.get('batchSize') || '20';
+  if (!$('apikey').value) $('settings').open = true;
+  $('apikey').addEventListener('change', (e) => store.set('ytApiKey', e.target.value.trim()));
+  $('size').addEventListener('change', (e) => { store.set('batchSize', e.target.value); if (lastItems) render(lastItems, lastTitle); });
+
+  let lastItems = null;
+  let lastTitle = '';
+
+  function setStatus(msg, kind = '') {
+    $('status').textContent = msg;
+    $('status').className = `status ${kind}`;
+  }
+
+  function toast(msg) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => t.classList.remove('show'), 1600);
+  }
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      const ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    }
+  }
+
+  $('paste').addEventListener('click', async () => {
+    try {
+      $('input').value = await navigator.clipboard.readText();
+    } catch {
+      toast('입력칸을 길게 눌러 붙여넣어 주세요');
+      $('input').focus();
+    }
+  });
+
+  $('go').addEventListener('click', run);
+
+  async function run() {
+    const { playlistIds, videoIds } = parseInput($('input').value);
+    if (!playlistIds.length && !videoIds.length) {
+      setStatus('YouTube 동영상/재생목록 URL을 찾지 못했습니다.', 'err');
+      return;
+    }
+    const key = $('apikey').value.trim();
+    if (playlistIds.length && !key) {
+      $('settings').open = true;
+      setStatus('재생목록을 읽으려면 설정에서 YouTube API 키를 입력하세요. (또는 아이폰 단축어 사용)', 'err');
+      return;
+    }
+
+    $('go').disabled = true;
+    const items = videoIds.map((id) => ({ videoId: id, title: '', privacy: 'unknown' }));
+    const titles = [];
+    try {
+      for (const pid of playlistIds) {
+        setStatus(`재생목록 불러오는 중… (${pid})`);
+        const [title, list] = await Promise.all([
+          fetchPlaylistTitle(pid, key).catch(() => ''),
+          fetchPlaylistItems(pid, key),
+        ]);
+        if (title) titles.push(title);
+        for (const it of list) {
+          if (!items.some((x) => x.videoId === it.videoId)) items.push(it);
+        }
+      }
+      const ok = items.filter(isImportable).length;
+      setStatus(`${items.length}개 영상 중 ${ok}개를 가져올 수 있습니다.`, 'ok');
+      lastItems = items;
+      lastTitle = titles.join(', ');
+      render(items, lastTitle);
+    } catch (err) {
+      setStatus(`오류: ${err.message}`, 'err');
+    } finally {
+      $('go').disabled = false;
+    }
+  }
+
+  function render(items, title) {
+    const size = Number($('size').value) || 20;
+    const importable = items.filter(isImportable);
+    const skipped = items.filter((it) => !isImportable(it));
+    const batches = chunk(importable, size);
+
+    $('summary').textContent = `${title ? `「${title}」 ` : ''}${importable.length}개 · ${batches.length}묶음`;
+    const root = $('batches');
+    root.replaceChildren();
+
+    batches.forEach((batch, i) => {
+      const start = importable.indexOf(batch[0]) + 1;
+      const end = start + batch.length - 1;
+      const wrap = document.createElement('div');
+      wrap.className = 'batch';
+
+      const head = document.createElement('div');
+      head.className = 'batch-head';
+      const label = document.createElement('strong');
+      label.textContent = batches.length > 1 ? `묶음 ${i + 1} (${start}–${end})` : `전체 ${batch.length}개`;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'primary';
+      btn.textContent = '복사';
+      btn.addEventListener('click', async () => {
+        const text = batch.map((it) => toWatchUrl(it.videoId)).join('\n');
+        if (await copyText(text)) {
+          wrap.classList.add('done');
+          toast(`${batch.length}개 URL 복사됨 — NotebookLM에 붙여넣으세요`);
+        } else {
+          toast('복사 실패: 목록을 길게 눌러 직접 복사하세요');
+        }
+      });
+      head.append(label, btn);
+
+      const ol = document.createElement('ol');
+      ol.start = start;
+      for (const it of batch) {
+        const li = document.createElement('li');
+        const a = document.createElement('a');
+        a.href = toWatchUrl(it.videoId);
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = it.title || toWatchUrl(it.videoId);
+        li.append(a);
+        if (it.privacy === 'unlisted') {
+          const tag = document.createElement('span');
+          tag.className = 'tag';
+          tag.textContent = '일부공개';
+          li.append(tag);
+        }
+        ol.append(li);
+      }
+      wrap.append(head, ol);
+      root.append(wrap);
+    });
+
+    if (skipped.length) {
+      const wrap = document.createElement('div');
+      wrap.className = 'batch';
+      const head = document.createElement('div');
+      head.className = 'batch-head';
+      head.innerHTML = '<strong>제외됨 (비공개/삭제)</strong>';
+      const ol = document.createElement('ol');
+      for (const it of skipped) {
+        const li = document.createElement('li');
+        li.className = 'skip';
+        li.textContent = it.title || it.videoId;
+        ol.append(li);
+      }
+      wrap.append(head, ol);
+      root.append(wrap);
+    }
+
+    $('result').hidden = false;
+  }
+
+  // 단축어/공유 시트 연동: ?url=<재생목록 URL> 로 열면 자동 실행
+  const params = new URLSearchParams(location.search);
+  const shared = params.get('url') || params.get('text');
+  if (shared) {
+    $('input').value = shared;
+    run();
+  }
+</script>
+</body>
+</html>
